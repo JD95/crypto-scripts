@@ -10,6 +10,7 @@ import Control.Arrow
 import Data.Char
 import Data.Bits
 import Control.Monad
+import Control.Applicative
 
 someFunc :: IO ()
 someFunc = putStrLn "someFunc"
@@ -77,7 +78,7 @@ euclidGCD = F.cata f . iterSegment (snd &&& uncurry mod)
   where f F.Nil = pure ()
         f (F.Cons i m) = record i >> m
 
-type ResultLog a = Writer [a] a
+type ResultLog a = WriterT [a] Maybe a
 
 record :: a -> Writer [a] a
 record = pass . pure . (id &&& (:))
@@ -118,24 +119,6 @@ permuteShift n = zip alphabet ((permutations alphabet) !!n)
 
 permuteEncode n = sequence . fmap (`lookup` permuteShift n) . fmap toLower
 
-
--- Towers of Hanoi
-
---transfer :: (Int, Int) -> [[a]] -> [[a]]
---transfer (a,b) xs = 
-{-
-ms 0 = [0]
-ms n = (2^(n-1)):(ms (n-1))
-
-checks n m = let k = (2^(n-1) `div` m) in map ((2^n)-m)[1..k]
-
-hanoi :: [Int] -> [[[Int]]]
-hanoi inputList = let moveCount = \c -> (mod ((+) 1 c) (2^(length inputList)))
-                      startingBoard = [inputList, [], []]
-                      checkLists = map (checks (length inputList)) (ms (length inputList))
-                  in [[[]]]
--}
-
 -- RSA
 
 rsaEncrypt m (n,e) = m^e `mod` n
@@ -149,42 +132,60 @@ chineseRemainder (a,m) (b,n) = let ((_,s,t),_) = runWriter $ eGCD (m,n)
 
 -- Hanoi with Binary
 
-data Zipper a = Z [a] a [a] deriving (Show)
+removeDisk :: Eq disk => disk -> [[disk]] -> [[disk]]
+removeDisk = fmap . filter . (/=)
 
-toZipper (x:xs) = Z [] x xs
+placeDisk :: Ord disk => disk -> [disk] -> Maybe [disk]
+placeDisk m [] = Just [m]
+placeDisk m (n:ns) = if m < n then Just (m:n:ns) else Nothing
 
-zipLeft (Z (l:ls) m []) = Z [] l (ls ++ [m])
-zipLeft (Z l m (r:rs)) = Z (l ++ [m]) r rs
+smap :: Monad m => (a -> m a) -> Int -> [a] -> Maybe [m a]
+smap  f n ds = if 0 <= n && n < (length ds)
+               then let (l,r) = splitAt (n+1) ds
+                    in Just $ (fmap pure (init l)) ++ [f (last l)] ++ (fmap pure r)
+               else Nothing
 
-insertToMid :: a -> Zipper [a] -> [[a]]
-insertToMid m (Z l ms r) = l ++ [(m:ms)] ++ r 
+hanoiMove :: Ord disk => disk -> Int -> [[disk]] -> Maybe [[disk]]
+hanoiMove d n ds = once lifted <|> twice lifted
+    where lifted = removeDisk d ds
+          moveDisk n = sequence <=< smap (placeDisk d) n
+          once = moveDisk ((n+1) `mod` length ds)
+          twice = moveDisk ((n+2) `mod` length ds)
 
-canMoveRight (Z l (m:ms) ((n:r):rs)) = m < n
-canMoveRight (Z l (m:ms) ([]:r)) = True
-canMoveRight (Z ([]:ls) (m:ms) []) = True
-canMoveRight (Z ((n:l):ls) (m:ms) []) = m < n
-canMoveRight _ = False
+diskPosition :: Ord disk => disk -> [[disk]] -> Int
+diskPosition d = fst . head . filter (snd) . fmap (second (d`elem`)) . zip [0..]
 
-hanoiMove :: Int -> Zipper [Int] -> [[Int]]
-hanoiMove 0 (Z l m r) = l ++ [m] ++ r
-hanoiMove d z@(Z l [] r) = hanoiMove d (zipLeft z)
-hanoiMove d z@(Z l (m:ms) r)
-  | d == m && canMoveRight z = insertToMid m $ zipLeft (Z l ms r)
-  | d == m = insertToMid m . zipLeft . zipLeft $ (Z l ms r)
-  | otherwise = hanoiMove d (zipLeft z)
+hanoi :: [Int] -> Maybe [[[Int]]]
+hanoi ds = execWriterT $ foldM move startingBoard moves 
+  where startingBoard = [ds,[],[]]
 
-moves ds = fmap (hanoiMove . (!!) ds . countTrailingZeros) ns
-  where ns = concat . take 2 $ repeat ([1..(2^(length ds)-1)]::[Int])
+        moves = (if odd (length ds) then concat . take 2 . repeat else id)
+              . fmap ((!!) ds . countTrailingZeros)
+              $ ([1..(2^(length ds)-1)]::[Int])
 
-hanoi :: [Int] -> ResultLog [[Int]]
-hanoi ds = foldM (\b f -> record (f (toZipper b))) startingBoard  (moves ds)
-  where startingBoard = ds:(take (length ds-1) $ repeat [])
+        move :: [[Int]] -> Int -> ResultLog [[Int]]
+        move b d = do
+            r <- lift $ hanoiMove d (diskPosition d b) b
+            tell [r]
+            return r
+
 
 -- Primality Test
 
-bmod (x,n) = (x+((n-1)`div`2))`mod`n-((n-1)`div`2)
+powm :: Int -> Int -> Int -> Int -> Int
+powm b 0 m r = r
+powm b e m r | e `mod` 2 == 1 = powm (b * b `mod` m) (e `div` 2) m (r * b `mod` m)
+powm b e m r = powm (b * b `mod` m) (e `div` 2) m r
 
-bseq :: (Int,Int) -> [Int]
+bmod (x,n) = ((x+((n-1)`div`2))`mod`n)-((n-1)`div`2)
+
+bseq :: (Int,Int) -> Writer [String] [Int]
 bseq (b,n) = let s = countTrailingZeros (n-1)
-                 c = shiftR (n-1) s
-             in [bmod((b^(2^j*c))`mod`n,n) | j <- [0..(s+1)]]
+                 c = shiftL (n-1) s
+                 f :: Int -> Writer [String] Int
+                 f j = do
+                     tell ["b^(2^" ++ show j ++ "*" ++ show c ++ ")"]
+                     return $ bmod(powm b (2^(j*c)) n 1,n)
+             in do
+    sequence $ fmap f [0..(s+1)]
+    
