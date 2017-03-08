@@ -1,4 +1,10 @@
+
 {-# LANGUAGE ExistentialQuantification#-}
+
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+
+
 module Lib
     ( someFunc
     ) where
@@ -12,30 +18,35 @@ import Data.Char
 import Data.Bits
 import Control.Monad
 import Control.Applicative
+import Data.Numbers.Primes
 
 
 
 someFunc :: IO ()
 someFunc = putStrLn "someFunc"
 
+class Show m => PublicKeySystem key m where
+  data Encrypted m :: *
+  encrypt :: key -> m -> Encrypted m
+  decrypt :: key -> Encrypted m -> Maybe m
+
 -- Kid RSA
 
-data KidRSA = KidRSA { m::Int
-                     , e::Int
-                     , d::Int
-                     , n::Int
-                     } deriving Show
 
 
-kidRSA a b a1 b1 = KidRSA m e d n where
+data KidRSA = KidRSA{kidRsaKey :: Int, n::Int} deriving Show
+
+
+kidRSA a b a1 b1 = (KidRSA e n, KidRSA d n) where
   m = a * b - 1
   e = a1 * m + a
   d = b1 * m + b
   n = (e*d)`div` m
 
-encodeKidRSA p kid = ((e kid) * p) `mod` (n kid)
-
-decodeKidRSA p kid = ((d kid) * p) `mod` (n kid)
+instance PublicKeySystem KidRSA Int where
+    data Encrypted Int = KidM Int deriving Show
+    encrypt (KidRSA e n) m = KidM $ (e * m) `mod` n
+    decrypt (KidRSA d n) (KidM c) = Just $ (d * c) `mod` n
 
 -- Fermat Factoring
 
@@ -100,6 +111,7 @@ modInv m n = if n < m
              then modInv n m
              else let (_,_,t) = fst (runWriter $ eGCD (m,n)) in t
 
+
 toBinary :: Int -> [Int]
 toBinary 0 = []
 toBinary n = toBinary (n `div` 2) ++ [(n `mod` 2)]
@@ -139,6 +151,8 @@ quadraticFormula a b c = let q = sqrt ((b^2) - (4*a*c))
 
 chineseRemainder (a,m) (b,n) = let ((_,s,t),_) = runWriter $ eGCD (m,n)
                                in (b*s*m + a*t*n) `mod` (m*n)
+                                  
+nDigitPrimes m n a b = take n . filter ((<=) m. length . show) $ [p | p <- primes, p > a && p < b]
 
 -- Hanoi with Binary
 
@@ -201,6 +215,7 @@ bseq (b,n) = let s = countTrailingZeros (n-1)
              in do
     sequence $ fmap f [0..(s+1)]
 
+
 -- Discrete Log
    
 primRootTest a m = fmap (\n-> (n, powermod a n m)) [1..(m-2)]
@@ -217,4 +232,4 @@ is_prime n = factors n == [1, n]
 prime_factors n = filter is_prime (factors n)
 
 primRootFactorTest :: Int -> Int -> [Int]              
-primRootFactorTest a p = fmap (\d-> powermod a ((p-1) `div` d) p) (prime_factors (p-1))                   
+primRootFactorTest a p = fmap (\d-> powermod a ((p-1) `div` d) p) (prime_factors (p-1))
