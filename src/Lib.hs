@@ -1,3 +1,6 @@
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+
 module Lib
     ( someFunc
     ) where
@@ -11,23 +14,30 @@ import Data.Char
 import Data.Bits
 import Control.Monad
 import Control.Applicative
+import Data.Numbers.Primes
 
 someFunc :: IO ()
 someFunc = putStrLn "someFunc"
 
+class Show m => PublicKeySystem key m where
+  data Encrypted m :: *
+  encrypt :: key -> m -> Encrypted m
+  decrypt :: key -> Encrypted m -> Maybe m
+
 -- Kid RSA
 
-data KidRSA = KidRSA{m::Int, e::Int, d::Int,n::Int} deriving Show
+data KidRSA = KidRSA{kidRsaKey :: Int, n::Int} deriving Show
 
-kidRSA a b a1 b1 = KidRSA m e d n where
+kidRSA a b a1 b1 = (KidRSA e n, KidRSA d n) where
   m = a * b - 1
   e = a1 * m + a
   d = b1 * m + b
   n = (e*d)`div` m
 
-encodeKidRSA p kid = ((e kid) * p) `mod` (n kid)
-
-decodeKidRSA p kid = ((d kid) * p) `mod` (n kid)
+instance PublicKeySystem KidRSA Int where
+    data Encrypted Int = KidM Int deriving Show
+    encrypt (KidRSA e n) m = KidM $ (e * m) `mod` n
+    decrypt (KidRSA d n) (KidM c) = Just $ (d * c) `mod` n
 
 -- Fermat Factoring
 
@@ -88,7 +98,7 @@ eGCD = F.cata f . iterSegment (uncurry (flip mod) &&& fst)
         f (F.Cons (0, b) _) = record (b, 0, 1)
         f (F.Cons a m) = m >>= record . iter a
 
-modInv m n = let (s,_,_) = fst (runWriter $ eGCD (m,n)) in s
+modInv m n = let (_,_,t) = fst (runWriter $ eGCD (m,n)) in t
 
 toBinary :: Int -> [Int]
 toBinary 0 = []
@@ -129,6 +139,8 @@ quadraticFormula a b c = let q = sqrt ((b^2) - (4*a*c))
 
 chineseRemainder (a,m) (b,n) = let ((_,s,t),_) = runWriter $ eGCD (m,n)
                                in (b*s*m + a*t*n) `mod` (m*n)
+                                  
+nDigitPrimes m n a b = take n . filter ((<=) m. length . show) $ [p | p <- primes, p > a && p < b]
 
 -- Hanoi with Binary
 
@@ -189,3 +201,40 @@ bseq (b,n) = let s = countTrailingZeros (n-1)
              in do
     sequence $ fmap f [0..(s+1)]
     
+-- Discrete Log
+
+discLog :: Int -> Int -> Int -> Int
+discLog m b n  = (b ^ n) `mod` m
+
+primRoots n = fmap (discLog n) [1..(n-1)]
+
+data Elgamal = ElgamalPublic Int Int Int Int
+             | ElgamalPrivate Int Int
+
+{-
+instance PublicKeySystem Elgamal where
+  
+  encrypt (ElgamalPublic p a b k) = \m ->
+    let k' = powm b k p 1
+    in (powm a k p 1, (k' * m) `mod` p)
+
+  decrypt (ElgamalPrivate p a) = \(c1,c2) ->
+    let k = powm c1 a p 1
+        kInv = modInv p k
+    in Just $ (kInv * c2) `mod` p
+
+elgamalKeys p a a' k = ElgamalPublic p a (powm a a' p 1) k
+
+-- Discrete Log Solution
+
+babyStep y a n =
+         let s = ceiling $ sqrt (fromIntegral n)
+             ai = modInv n a
+             as = powm a s n 1
+             ks = [0..(s-1)]
+             f k = let aik = (powm ai k n 1)
+                   in (k,aik, (y * aik) `mod` n,(powm as k n 1))
+         in fmap f ks
+             
+
+-}
