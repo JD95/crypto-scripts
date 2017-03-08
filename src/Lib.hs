@@ -1,3 +1,4 @@
+{-# LANGUAGE ExistentialQuantification#-}
 module Lib
     ( someFunc
     ) where
@@ -12,12 +13,19 @@ import Data.Bits
 import Control.Monad
 import Control.Applicative
 
+
+
 someFunc :: IO ()
 someFunc = putStrLn "someFunc"
 
 -- Kid RSA
 
-data KidRSA = KidRSA{m::Int, e::Int, d::Int,n::Int} deriving Show
+data KidRSA = KidRSA { m::Int
+                     , e::Int
+                     , d::Int
+                     , n::Int
+                     } deriving Show
+
 
 kidRSA a b a1 b1 = KidRSA m e d n where
   m = a * b - 1
@@ -88,7 +96,9 @@ eGCD = F.cata f . iterSegment (uncurry (flip mod) &&& fst)
         f (F.Cons (0, b) _) = record (b, 0, 1)
         f (F.Cons a m) = m >>= record . iter a
 
-modInv m n = let (s,_,_) = fst (runWriter $ eGCD (m,n)) in s
+modInv m n = if n < m 
+             then modInv n m
+             else let (_,_,t) = fst (runWriter $ eGCD (m,n)) in t
 
 toBinary :: Int -> [Int]
 toBinary 0 = []
@@ -177,6 +187,8 @@ powm b 0 m r = r
 powm b e m r | e `mod` 2 == 1 = powm (b * b `mod` m) (e `div` 2) m (r * b `mod` m)
 powm b e m r = powm (b * b `mod` m) (e `div` 2) m r
 
+powermod b e m = powm b e m 1
+
 bmod (x,n) = ((x+((n-1)`div`2))`mod`n)-((n-1)`div`2)
 
 bseq :: (Int,Int) -> Writer [String] [Int]
@@ -188,4 +200,21 @@ bseq (b,n) = let s = countTrailingZeros (n-1)
                      return $ bmod(powm b (2^(j*c)) n 1,n)
              in do
     sequence $ fmap f [0..(s+1)]
-    
+
+-- Discrete Log
+   
+primRootTest a m = fmap (\n-> (n, powermod a n m)) [1..(m-2)]
+
+babyStepGiantStep a y n = let s = ceiling $ sqrt (fromIntegral n) 
+                              a' = modInv a n
+                              f k = let ak = powermod a' k n
+                                        as = powermod a s n
+                                     in (k, ak, y*ak `mod` n, powermod as k n)
+                          in fmap f [0.. (s-1)]
+
+factors n = [x | x <- [1..n], n `mod` x == 0]
+is_prime n = factors n == [1, n]
+prime_factors n = filter is_prime (factors n)
+
+primRootFactorTest :: Int -> Int -> [Int]              
+primRootFactorTest a p = fmap (\d-> powermod a ((p-1) `div` d) p) (prime_factors (p-1))                   
